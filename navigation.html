@@ -394,7 +394,7 @@
         );
 
         // ✅ 加载模型
-        const basePath = window.location.origin + (window.location.pathname.includes('HCIFinal') ? '/HCIFinal/' : '/');      
+        const basePath = window.location.origin + (window.location.pathname.includes('HCIFinal') ? '/HCIFinal/public/' : '/');      
         const result = await BABYLON.SceneLoader.ImportMeshAsync(
           "",
           `${basePath}models/`,       // 如果和 html 同目录，就留空
