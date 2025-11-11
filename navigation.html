@@ -302,7 +302,7 @@
       if (!narrationAudio) {
         // Vite / public 下的文件通过根路径访问：/narration.mp4
         const basePath = window.location.origin + (window.location.pathname.includes('HCIFinal') ? '/HCIFinal/public/' : '/');      
-        narrationAudio = new Audio("narration.mp4");
+        narrationAudio = new Audio(`${basePath}narration.mp4`);
       } else {
         narrationAudio.pause();
         narrationAudio.currentTime = 0;
