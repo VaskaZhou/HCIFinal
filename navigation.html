@@ -1,0 +1,549 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AR Navigation (Babylon GUI)</title>
+
+  <!-- Babylon.js -->
+  <script src="https://cdn.babylonjs.com/babylon.js"></script>
+  <script src="https://cdn.babylonjs.com/loaders/babylonjs.loaders.min.js"></script>
+  <script src="https://cdn.babylonjs.com/gui/babylon.gui.min.js"></script>
+
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      overflow: hidden;
+      background: black;
+    }
+    #renderCanvas {
+      width: 100%;
+      height: 100%;
+      touch-action: none;
+      display: block;
+    }
+  </style>
+</head>
+
+<body>
+  <canvas id="renderCanvas"></canvas>
+
+  <script>
+    let xr = null;                 // XR experience
+    let hitTest = null;            // hit test feature
+    let groundPosition = null;     // 最近一次命中的地面点
+    let portalModel = null;        // 当前 Time Portal 里显示的模型
+
+    let narrationAudio = null;
+    let subtitleRect = null;
+    let subtitleText = null;
+    let subtitleTimers = [];
+
+
+    // --------- Parse route from URL ---------
+    const params = new URLSearchParams(window.location.search);
+    let route = null;
+    try {
+      const raw = params.get("route");
+      if (raw) route = JSON.parse(decodeURIComponent(raw));
+    } catch (e) {
+      route = null;
+    }
+
+    // ✅ 如果 route 参数为空，则创建一个默认空数组，代表“自由探索模式”
+    if (!route) {
+      route = []; // 避免 null 报错
+      console.log("Free explore mode: showing all QR UI only.");
+    }
+
+
+    // --------- Babylon basic setup ---------
+    const canvas = document.getElementById("renderCanvas");
+    const engine = new BABYLON.Engine(canvas, true);
+    const scene = new BABYLON.Scene(engine);
+    scene.clearColor = new BABYLON.Color4(0, 0, 0, 0); // transparent for AR
+
+    const light = new BABYLON.HemisphericLight("light", new BABYLON.Vector3(0, 1, 0), scene);
+    light.intensity = 0.9;
+
+    // --------- Spots and labels ---------
+    const spotPositions = {
+      // "Gate":        new BABYLON.Vector3(0,  -1,  0),
+      // "Stable":      new BABYLON.Vector3(10, -1, -3),
+      // "Garden":      new BABYLON.Vector3(-1, -1, 7),
+      // "Dining Hall": new BABYLON.Vector3(-2,  0,  2),
+      // "Cellar":      new BABYLON.Vector3(-3, -2, 0),
+      "Gate":        new BABYLON.Vector3(0,  -3,  3),
+      "Stable":      new BABYLON.Vector3(20, -2, -6),
+      "Garden":      new BABYLON.Vector3(-2, -2, 14),
+      "Dining Hall": new BABYLON.Vector3(-4,  0,  4),
+      "Cellar":      new BABYLON.Vector3(-6, -4, 0)
+    };
+
+    const spotLabels = {
+      "Gate":        "QR Code for Gate",
+      "Stable":      "QR Code for Stable",
+      "Garden":      "QR Code for Garden",
+      "Dining Hall": "QR Code for Dining Hall",
+      "Cellar":      "QR Code for Cellar"
+    };
+
+    // --------- World-space square UI (QR Code for XX) ---------
+    function createSpotUI(name, pos) {
+      const plane = BABYLON.MeshBuilder.CreatePlane(name + "_UI", { size: 1 }, scene);
+      plane.position = pos;
+      plane.billboardMode = BABYLON.Mesh.BILLBOARDMODE_ALL;
+
+      const tex = BABYLON.GUI.AdvancedDynamicTexture.CreateForMesh(plane);
+      const rect = new BABYLON.GUI.Rectangle();
+      rect.width = 1;
+      rect.height = 1;
+      rect.cornerRadius = 6;
+      rect.thickness = 3;
+      rect.color = "#7a6248";      // vintage dark brown border
+      rect.background = "#fffef7"; // warm off-white
+      rect.alpha = 0.97;
+      tex.addControl(rect);
+
+      const tb = new BABYLON.GUI.TextBlock();
+      tb.text = spotLabels[name];
+      tb.color = "#3a2e23";
+      tb.fontSize = 80;
+      tb.fontFamily = "Georgia, 'Times New Roman', serif";
+      tb.textWrapping = true;
+      rect.addControl(tb);
+
+      rect.onPointerClickObservable.add(() => {
+        showActionPanel(name);
+        if (route) highlightStep(name);
+      });
+    }
+
+    Object.keys(spotPositions).forEach(name => {
+      createSpotUI(name, spotPositions[name]);
+    });
+
+    // --------- Fullscreen GUI (for route bar + action panel) ---------
+    const ui = BABYLON.GUI.AdvancedDynamicTexture.CreateFullscreenUI("UI");
+
+    function ensureSubtitleUI(ui) {
+      if (subtitleRect) return;
+
+      subtitleRect = new BABYLON.GUI.Rectangle("subtitleRect");
+      subtitleRect.width = "90%";
+      subtitleRect.height = "80px";
+      subtitleRect.thickness = 0;
+      subtitleRect.cornerRadius = 6;
+      subtitleRect.color = "#00000000";
+      subtitleRect.background = "rgba(15, 10, 5, 0.75)";
+      subtitleRect.verticalAlignment = BABYLON.GUI.Control.VERTICAL_ALIGNMENT_BOTTOM;
+      subtitleRect.horizontalAlignment = BABYLON.GUI.Control.HORIZONTAL_ALIGNMENT_CENTER;
+      subtitleRect.bottom = "20px";
+      subtitleRect.isVisible = false;
+      ui.addControl(subtitleRect);
+
+      subtitleText = new BABYLON.GUI.TextBlock("subtitleText");
+      subtitleText.text = "";
+      subtitleText.color = "#f9f3dc";
+      subtitleText.fontSize = 24;
+      subtitleText.fontFamily = "Georgia";
+      subtitleText.textWrapping = true;
+      subtitleText.textHorizontalAlignment = BABYLON.GUI.Control.HORIZONTAL_ALIGNMENT_CENTER;
+      subtitleText.textVerticalAlignment = BABYLON.GUI.Control.VERTICAL_ALIGNMENT_CENTER;
+      subtitleRect.addControl(subtitleText);
+    }
+
+
+    // ====== Route progress bar (top, vintage style, centered layout) ======
+    const routeContainer = new BABYLON.GUI.Rectangle("routeContainer");
+    routeContainer.width = "90%";
+    routeContainer.height = "50px";
+    routeContainer.thickness = 1;
+    routeContainer.cornerRadius = 10;
+    routeContainer.color = "#8b5a2b";
+    routeContainer.background = "rgba(46, 34, 22, 0.85)";
+    routeContainer.horizontalAlignment = BABYLON.GUI.Control.HORIZONTAL_ALIGNMENT_CENTER;
+    routeContainer.verticalAlignment = BABYLON.GUI.Control.VERTICAL_ALIGNMENT_TOP;
+    routeContainer.top = "75px";
+    routeContainer.isVisible = !!(route && route.length > 0);
+    ui.addControl(routeContainer);
+
+    // ✅ 使用 Grid 实现水平居中分布（自适应列宽）
+    const routeGrid = new BABYLON.GUI.Grid();
+    routeGrid.width = "95%";
+    routeGrid.height = "100%";
+    routeGrid.horizontalAlignment = BABYLON.GUI.Control.HORIZONTAL_ALIGNMENT_CENTER;
+    routeGrid.verticalAlignment = BABYLON.GUI.Control.VERTICAL_ALIGNMENT_CENTER;
+
+    // 根据文字长度动态定义列宽
+    let totalCols = route.length * 2 - 1;
+    let totalChars = 0;
+    route.forEach(name => totalChars += name.length);
+
+    // 建立列定义
+    for (let i = 0; i < totalCols; i++) {
+      if (i % 2 === 0) {
+        // 地点列，按名称长度分配
+        const name = route[Math.floor(i / 2)];
+        const widthRatio = name.length / totalChars;
+        routeGrid.addColumnDefinition(widthRatio);
+      } else {
+        // 箭头列（固定小宽度）
+        routeGrid.addColumnDefinition(0.05);
+      }
+    }
+    routeContainer.addControl(routeGrid);
+
+
+    if (route && route.length > 0) {
+      for (let i = 0; i < route.length; i++) {
+        const name = route[i];
+        const stepLabel = new BABYLON.GUI.TextBlock("step_" + name);
+        stepLabel.text = name;
+        stepLabel.color = "#f5e1b7";
+        stepLabel.fontFamily = "Georgia";
+        stepLabel.fontSize = 12;
+        stepLabel.textHorizontalAlignment = BABYLON.GUI.Control.HORIZONTAL_ALIGNMENT_CENTER;
+        stepLabel.textVerticalAlignment = BABYLON.GUI.Control.VERTICAL_ALIGNMENT_CENTER;
+        routeGrid.addControl(stepLabel, 0, i * 2);
+
+        if (i < route.length - 1) {
+          const arrow = new BABYLON.GUI.TextBlock();
+          arrow.text = "→";
+          arrow.color = "#d7b475";
+          arrow.fontSize = 10;
+          arrow.textHorizontalAlignment = BABYLON.GUI.Control.HORIZONTAL_ALIGNMENT_CENTER;
+          arrow.textVerticalAlignment = BABYLON.GUI.Control.VERTICAL_ALIGNMENT_CENTER;
+          routeGrid.addControl(arrow, 0, i * 2 + 1);
+        }
+      }
+    }
+
+    function highlightStep(name) {
+      if (!route || !route.length) return;
+      routeGrid.children.forEach(c => {
+        if (c.name && c.name === "step_" + name) {
+          c.color = "#a1ff8a"; // 当前地点绿色高亮
+        } else if (c.text && c.text !== "→") {
+          c.color = "#f5e1b7";
+        }
+      });
+    }
+
+    if (route && route.length > 0) highlightStep(route[0]);
+
+
+    // ====== Bottom action panel ======
+    const actionPanel = new BABYLON.GUI.Rectangle("actionPanel");
+    actionPanel.isPointerBlocker = true;  // 点击它时不会点到后面的模型
+    actionPanel.width = "100%";
+    actionPanel.height = "280px";
+    actionPanel.thickness = 0;
+    actionPanel.background = "rgba(41, 30, 20, 0.94)";
+    actionPanel.verticalAlignment = BABYLON.GUI.Control.VERTICAL_ALIGNMENT_BOTTOM;
+    actionPanel.isVisible = false;
+    ui.addControl(actionPanel);
+
+    const actionStack = new BABYLON.GUI.StackPanel();
+    actionStack.width = "85%";
+    actionStack.height = "100%";
+    actionStack.verticalAlignment = BABYLON.GUI.Control.VERTICAL_ALIGNMENT_CENTER;
+    actionStack.horizontalAlignment = BABYLON.GUI.Control.HORIZONTAL_ALIGNMENT_CENTER;
+    actionStack.paddingTop = "12px";
+    actionPanel.addControl(actionStack);
+
+    const actionTitle = new BABYLON.GUI.TextBlock();
+    actionTitle.text = "";
+    actionTitle.fontSize = 28;
+    actionTitle.height = "50px";
+    actionTitle.color = "#f5e3c6";
+    actionTitle.fontFamily = "Georgia";
+    actionStack.addControl(actionTitle);
+
+    function makeButton(label, bgColor, onClick, disabled = false) {
+      const btn = BABYLON.GUI.Button.CreateSimpleButton(label, label);
+      btn.isPointerBlocker = true;  // 点击它时不会点到后面的模型
+      btn.height = "60px";
+      btn.color = "#fdf5e6";
+      btn.fontSize = 26;
+      btn.fontFamily = "system-ui";
+      btn.cornerRadius = 8;
+      btn.thickness = 1;
+      btn.background = bgColor;
+      btn.alpha = disabled ? 0.4 : 0.9;
+      btn.isPointerBlocker = !disabled;
+      btn.horizontalAlignment = BABYLON.GUI.Control.HORIZONTAL_ALIGNMENT_STRETCH;
+      btn.paddingTop = "4px";
+      btn.paddingBottom = "4px";
+      btn.paddingLeft = "2px";
+      btn.paddingRight = "2px";
+      if (!disabled && onClick) {
+        btn.onPointerUpObservable.add(onClick);
+      }
+      actionStack.addControl(btn);
+      return btn;
+    }
+
+    makeButton("🎧 Listen to narration", "#855555", onListenClick);
+    function onListenClick() {
+      // 关掉 Action Panel
+      actionPanel.isVisible = false;
+
+      // 确保字幕 UI 存在
+      ensureSubtitleUI(ui);
+
+      // 清理旧的字幕定时器
+      subtitleTimers.forEach(id => clearTimeout(id));
+      subtitleTimers = [];
+
+      // 准备/重置音频
+      if (!narrationAudio) {
+        // Vite / public 下的文件通过根路径访问：/narration.mp4
+        narrationAudio = new Audio("/narration.mp4");
+      } else {
+        narrationAudio.pause();
+        narrationAudio.currentTime = 0;
+      }
+
+      // 简单的 20 秒字幕时间轴（按你给的文本粗略切段）
+      const cues = [
+        {
+          time: 0,
+          text: "This is a test audio for the Listen to Narration feature."
+        },
+        {
+          time: 4,
+          text: "Casa Loma, Toronto's majestic castle, stands as a testament to grandeur and history."
+        },
+        {
+          time: 10,
+          text: "Built in the early 20th century, this Gothic Revival style mansion offers breathtaking architecture and secret passages."
+        },
+        {
+          time: 19,
+          text: "Its beautiful gardens transport visitors to a bygone era of elegance and romance."
+        },
+        {
+          time: 24,
+          text: ""  // 结束时清空字幕
+        }
+      ];
+
+      // 显示字幕框
+      subtitleRect.isVisible = true;
+      subtitleText.text = "";
+
+      // 按时间点调度字幕内容
+      cues.forEach(cue => {
+        const id = setTimeout(() => {
+          if (!subtitleText || !subtitleRect) return;
+          subtitleText.text = cue.text;
+          // 最后一条为空时把字幕框关掉
+          if (cue.text === "") {
+            subtitleRect.isVisible = false;
+          }
+        }, cue.time * 1000);
+        subtitleTimers.push(id);
+      });
+
+      // 播放音频
+      narrationAudio.play().catch(err => {
+        console.warn("Audio play failed (maybe user gesture / permission issue):", err);
+      });
+    }
+
+
+    makeButton("🗺️ Directions – add this spot to My Route", "#0b7a4b", () => {
+      const spotName = actionTitle.text;
+      if (!spotName) return;
+      const encoded = encodeURIComponent(spotName);
+      window.location.href = `route.html?add=${encoded}`;
+    });
+
+    makeButton("⏳ Time Portal", "#4b0082", async () => {
+      actionPanel.isVisible = false;
+      const spotName = actionTitle.text;
+      if (!spotName) return;
+
+      //const modelUrl = `models/${spotName}.glb`; // 按你实际路径改
+      const modelUrl = `models/knight.glb`;
+      try {
+        const cam = scene.activeCamera;
+        if (!cam) return;
+
+        // 每次加载前：彻底清理旧模型 + 清空计时器
+        if (portalModel) {
+          try {
+            portalModel.dispose();
+          } catch (e) { console.warn("Dispose old model failed", e); }
+          portalModel = null;
+        }
+        if (window._portalTimer) {
+          clearTimeout(window._portalTimer);
+          window._portalTimer = null;
+        }
+
+        // 先算一个 fallback：摄像头前方 1m
+        const forward = cam.getDirection(BABYLON.Axis.Z);
+        const fallbackPos = new BABYLON.Vector3(
+          cam.position.x + forward.x*2,
+          cam.position.y + forward.y*2 -0.5,
+          cam.position.z + forward.z*2
+        );
+
+        // ✅ 加载模型
+        const result = await BABYLON.SceneLoader.ImportMeshAsync(
+          "",
+          "",       // 如果和 html 同目录，就留空
+          modelUrl,
+          scene
+        );
+
+        portalModel = result.meshes[0];
+
+        // 初始放置位置：如果已经有 groundPosition 就用地面点，否则用前方 1m
+        const spawnPos = groundPosition ? groundPosition : fallbackPos;
+        portalModel.position.copyFrom(spawnPos);
+        portalModel.scaling.scaleInPlace(0.4);
+
+        // 朝向摄像头
+        portalModel.lookAt(new BABYLON.Vector3(cam.position.x, portalModel.position.y, cam.position.z));
+        portalModel.rotate(BABYLON.Axis.Y, Math.PI, BABYLON.Space.WORLD);
+
+        // 十秒后自动销毁
+        window._portalTimer = setTimeout(() => {
+          if (portalModel && !portalModel.isDisposed()) {
+            portalModel.dispose();
+            portalModel = null;
+            console.log("🌀 Time Portal closed.");
+          }
+        }, 15000);
+
+      } catch (err) {
+        console.warn(`Failed to load model for ${spotName}:`, err);
+      }
+    });
+
+
+
+    // Close button
+    const closeBtn = BABYLON.GUI.Button.CreateSimpleButton("close", "✕");
+    closeBtn.isPointerBlocker = true;  // 点击它时不会点到后面的模型
+    closeBtn.width = "65px";
+    closeBtn.height = "65px";
+    closeBtn.color = "#f5e3c6";
+    closeBtn.fontSize = 18;
+    closeBtn.thickness = 1;
+    closeBtn.cornerRadius = 10;
+    closeBtn.background = "rgba(100, 80, 40, 0.6)";
+    closeBtn.horizontalAlignment = BABYLON.GUI.Control.HORIZONTAL_ALIGNMENT_RIGHT;
+    closeBtn.verticalAlignment = BABYLON.GUI.Control.VERTICAL_ALIGNMENT_TOP;
+    closeBtn.top = "6px";
+    closeBtn.paddingRight = "8px";
+    closeBtn.onPointerUpObservable.add(() => {
+      actionPanel.isVisible = false;
+    });
+    actionPanel.addControl(closeBtn);
+
+    function showActionPanel(spotName) {
+      actionTitle.text = spotName;
+      actionPanel.isVisible = true;
+    }
+
+    // --------- Dynamic route line (3D) ---------
+    if (route && route.length >= 1) {
+      // 当前相机位置
+      const camPos = scene.activeCamera ? scene.activeCamera.position.clone() : new BABYLON.Vector3(0, 0, 0);
+      // 目标点（第一个地点的位置）
+      const firstSpot = spotPositions[route[0]];
+      // 从摄像头到第一个地点的线
+      if (firstSpot) {
+        const connectLine = BABYLON.MeshBuilder.CreateLines("cameraToFirst", {
+          points: [camPos, firstSpot]
+        }, scene);
+        connectLine.color = new BABYLON.Color3(0.2, 1.0, 0.4);
+        connectLine.alpha = 0.95;
+      }
+      // 路线点连线
+      const points = route
+        .map(name => spotPositions[name])
+        .filter(Boolean);
+      if (points.length > 1) {
+        const line = BABYLON.MeshBuilder.CreateLines("routeLine", { points }, scene);
+        line.color = new BABYLON.Color3(0.2, 1.0, 0.4);
+        line.alpha = 0.95;
+      }
+    }
+
+    // --------- Start AR (or fallback 3D) ---------
+    const startXR = async () => {
+      try {
+        xr = await scene.createDefaultXRExperienceAsync({
+          uiOptions: {
+            sessionMode: "immersive-ar",
+            referenceSpaceType: "local-floor"
+          },
+          optionalFeatures: true
+        });
+
+        // ✅ 启用 AR Hit Test（射线命中真实世界表面）
+        hitTest = xr.baseExperience.featuresManager.enableFeature(
+          BABYLON.WebXRHitTest,
+          "latest",
+          { xrInput: xr.input }
+        );
+
+        hitTest.onHitTestResultObservable.add((results) => {
+          if (results.length > 0) {
+            const hit = results[0];
+            if (hit.position) {
+              // ✅ 直接读取封装好的 Vector3
+              if (!groundPosition) groundPosition = new BABYLON.Vector3();
+              groundPosition.copyFrom(hit.position);
+            } else if (hit.xrHitResult && hit.xrHitResult.getPose) {
+              // ✅ 兼容某些浏览器实现（原生 WebXRHitResult）
+              const pose = hit.xrHitResult.getPose(xr.baseExperience.sessionManager.referenceSpace);
+              if (pose && pose.transform) {
+                const { x, y, z } = pose.transform.position;
+                if (!groundPosition) groundPosition = new BABYLON.Vector3();
+                groundPosition.set(x, y, z);
+              }
+            }
+          }
+        });
+
+      } catch (err) {
+        console.warn("AR not supported, falling back:", err);
+        
+        const cam = new BABYLON.ArcRotateCamera(
+          "camera",
+          Math.PI / 4,
+          Math.PI / 3,
+          25,
+          new BABYLON.Vector3(0, -1, 0),
+          scene
+        );
+        cam.attachControl(canvas, true);
+        scene.clearColor = new BABYLON.Color4(0.05, 0.05, 0.1, 1);
+      }
+    };
+
+    startXR();
+
+    // --------- Render loop ---------
+    engine.runRenderLoop(() => {
+      // 如果当前有 portal 模型，并且已经有命中的地面点，就让它一直跟着地面点
+      if (portalModel && groundPosition) {
+        portalModel.position.copyFrom(groundPosition);
+        const cam = scene.activeCamera;
+        portalModel.lookAt(new BABYLON.Vector3(cam.position.x, portalModel.position.y, cam.position.z));
+        portalModel.rotate(BABYLON.Axis.Y, Math.PI, BABYLON.Space.WORLD);
+      }
+      scene.render();
+    });
+    window.addEventListener("resize", () => engine.resize());
+  </script>
+</body>
+</html>

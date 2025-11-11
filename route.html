@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Route Planner - Casa Loma</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- 🎩 优雅古典字体 -->
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel+Decorative:wght@700&family=Cormorant+Garamond:wght@400;600&display=swap" rel="stylesheet">
+  
+  <style>
+    body {
+      background: radial-gradient(circle at center, #2b1b0f 0%, #1a0e08 100%);
+      color: #f8f5e7;
+      font-family: 'Cormorant Garamond', serif;
+      background-image: url('https://www.transparenttextures.com/patterns/aged-paper.png');
+      background-repeat: repeat;
+    }
+
+    h1, h2 {
+      font-family: 'Cinzel Decorative', serif;
+      letter-spacing: 1px;
+      color: #f6b21e;
+      text-shadow: 0 0 6px rgba(255, 215, 150, 0.3);
+    }
+
+    select, button.spot {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 1.05rem;
+    }
+
+    /* === 通用按钮风格（古铜金） === */
+    .spot {
+      background: linear-gradient(145deg, #3c2b20, #4e3825);
+      border: 1px solid #bfa05c;
+      color: #f9f3dc;
+      transition: all 0.2s ease;
+    }
+
+    .spot:hover {
+      background: linear-gradient(145deg, #5c422e, #735634);
+      transform: scale(1.05);
+      box-shadow: 0 0 10px rgba(255, 230, 180, 0.3);
+    }
+
+    /* === Selected Route 区域 === */
+    .route-container {
+      background: rgba(60, 40, 20, 0.75);
+      border: 1px solid #d1b374;
+      box-shadow: inset 0 0 20px rgba(0, 0, 0, 0.4);
+      border-radius: 8px;
+    }
+
+    /* === 删除按钮 === */
+    .delete-btn {
+      font-size: 1rem;
+      color: #d7796a;
+      transition: 0.2s;
+    }
+
+    .delete-btn:hover {
+      color: #ffb7a0;
+      transform: scale(1.2);
+    }
+
+    /* === 下拉菜单 === */
+    select {
+      background: #f9f3dc;
+      border: 1px solid #bfa05c;
+      border-radius: 6px;
+      color: #3c2b20;
+      padding: 6px 8px;
+      font-weight: 600;
+    }
+
+    /* === 开始导航按钮 === */
+    #startBtn {
+      background: linear-gradient(90deg, #9d6b2d, #b98d4c);
+      border: 1px solid #d1b374;
+      color: #fff9e5;
+      font-family: 'Cinzel Decorative', serif;
+      text-shadow: 0 1px 4px rgba(0,0,0,0.4);
+      transition: all 0.3s;
+    }
+
+    #startBtn:hover {
+      background: linear-gradient(90deg, #b98d4c, #d9a85c);
+      box-shadow: 0 0 12px rgba(255, 220, 150, 0.5);
+      transform: translateY(-2px);
+    }
+
+    .draggable {
+      cursor: grab;
+    }
+    .dragging {
+      opacity: 0.6;
+      transform: scale(1.03);
+    }
+  </style>
+</head>
+
+<body class="min-h-screen flex flex-col items-center justify-start pt-8 text-center">
+  <h1 class="text-[28px] mb-2">Casa Loma Route Planner</h1>
+
+  <!-- 热门路线选择 -->
+  <div class="mb-4 w-11/12 max-w-xs mx-auto">
+    <label for="preset" class="block mb-2 text-sm text-amber-600 italic">Popular Routes</label>
+    <select id="preset" class="w-full text-slate-700 text-sm">
+      <option value="">Select a route</option>
+      <option value="Gate,Stable,Garden">🌟 Classic Tour (Gate → Stable → Garden)</option>
+      <option value="Gate,Dining Hall,Garden">🍷 Relaxed Tour (Gate → Dining Hall → Garden)</option>
+    </select>
+  </div>
+
+  <!-- Spot池 -->
+  <div>
+    <h2 class="text-xl mb-2">Available Locations</h2>
+    <div id="spotPool" class="flex flex-wrap justify-center gap-3 mb-4">
+      <button class="spot px-3 py-1 rounded" data-name="Gate">🚪 Gate</button>
+      <button class="spot px-3 py-1 rounded" data-name="Stable">🐴 Stable</button>
+      <button class="spot px-3 py-1 rounded" data-name="Garden">🌸 Garden</button>
+      <button class="spot px-3 py-1 rounded" data-name="Dining Hall">🍽️ Dining Hall</button>
+      <button class="spot px-3 py-1 rounded" data-name="Cellar">🍷 Cellar</button>
+    </div>
+  </div>
+
+  <!-- 选定路线 -->
+  <div class="w-11/12 max-w-md route-container p-4 rounded-lg mb-4">
+    <h2 class="mb-3 text-yellow-200">Selected Route</h2>
+    <ul id="routeList" class="min-h-[60px] bg-[rgba(20,10,5,0.6)] rounded p-3 flex flex-col gap-1"></ul>
+  </div>
+
+  <!-- 开始导航按钮 -->
+  <button id="startBtn" class="px-8 py-3 rounded-lg font-bold text-lg">
+    🏰 Begin the Journey
+  </button>
+
+  <script>
+    const spotPool = document.getElementById('spotPool');
+    const routeList = document.getElementById('routeList');
+    const preset = document.getElementById('preset');
+    const startBtn = document.getElementById('startBtn');
+
+    // === 添加Spot到路线 ===
+    spotPool.addEventListener('click', e => {
+      if (e.target.classList.contains('spot')) {
+        const name = e.target.dataset.name;
+        addToRoute(name, e.target.textContent);
+        e.target.remove();
+      }
+    });
+
+    // === 预设路线选择 ===
+    preset.addEventListener('change', () => {
+      const routeItems = [...routeList.children];
+      routeItems.forEach(li => {
+        const name = li.dataset.name;
+        const label = li.querySelector('span')?.textContent || name;
+        const btn = document.createElement('button');
+        btn.innerHTML = label;
+        btn.className = 'spot px-4 py-2 rounded';
+        btn.dataset.name = name;
+        spotPool.appendChild(btn);
+        li.remove();
+      });
+
+      const spots = preset.value.split(',').filter(Boolean);
+      spots.forEach(name => {
+        const poolBtn = spotPool.querySelector(`[data-name='${name}']`);
+        const label = poolBtn ? poolBtn.textContent : name;
+        addToRoute(name, label);
+        if (poolBtn) poolBtn.remove();
+      });
+    });
+
+    // === 添加到路线列表 ===
+    function addToRoute(name, label) {
+      const li = document.createElement('li');
+      li.innerHTML = `<span>☰ ${label}</span>`;
+      li.className = 'draggable px-4 py-1 rounded flex justify-between items-center bg-[rgba(80,60,40,0.8)] border border-yellow-700 shadow-md';
+      li.draggable = true;
+      li.dataset.name = name;
+
+      const delBtn = document.createElement('button');
+      delBtn.textContent = '✖';
+      delBtn.className = 'delete-btn ml-3';
+      delBtn.onclick = () => {
+        li.remove();
+        const btn = document.createElement('button');
+        btn.innerHTML = label;
+        btn.className = 'spot px-3 py-1 rounded';
+        btn.dataset.name = name;
+        spotPool.appendChild(btn);
+      };
+      li.appendChild(delBtn);
+
+      routeList.appendChild(li);
+      enableDragAndDrop();
+    }
+
+    // === 启用拖拽排序 ===
+    function enableDragAndDrop() {
+      const draggables = routeList.querySelectorAll('.draggable');
+      draggables.forEach(draggable => {
+        draggable.addEventListener('dragstart', () => draggable.classList.add('dragging'));
+        draggable.addEventListener('dragend', () => draggable.classList.remove('dragging'));
+      });
+
+      routeList.addEventListener('dragover', e => {
+        e.preventDefault();
+        const afterElement = getDragAfterElement(routeList, e.clientY);
+        const dragging = document.querySelector('.dragging');
+        if (afterElement == null) routeList.appendChild(dragging);
+        else routeList.insertBefore(dragging, afterElement);
+      });
+    }
+
+    function getDragAfterElement(container, y) {
+      const elements = [...container.querySelectorAll('.draggable:not(.dragging)')];
+      return elements.reduce((closest, child) => {
+        const box = child.getBoundingClientRect();
+        const offset = y - box.top - box.height / 2;
+        if (offset < 0 && offset > closest.offset) {
+          return { offset, element: child };
+        } else {
+          return closest;
+        }
+      }, { offset: Number.NEGATIVE_INFINITY }).element;
+    }
+
+    // === 开始导航 ===
+    startBtn.addEventListener('click', () => {
+      const route = Array.from(routeList.children).map(li => li.dataset.name);
+      if (route.length === 0) {
+        alert('Please select at least one location!');
+        return;
+      }
+      const routeParam = encodeURIComponent(JSON.stringify(route));
+      window.location.href = `navigation.html?route=${routeParam}`;
+    });
+
+    // === 页面加载时自动加入从 add 参数传来的地点 ===
+    window.addEventListener('DOMContentLoaded', () => {
+      const params = new URLSearchParams(window.location.search);
+      const add = params.get('add');
+      if (add) {
+        const poolBtn = spotPool.querySelector(`[data-name='${add}']`);
+        const label = poolBtn ? poolBtn.textContent : add;
+        addToRoute(add, label);
+        if (poolBtn) poolBtn.remove();
+      }
+    });
+  </script>
+</body>
+</html>

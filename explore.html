@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Explore Castle</title>
+
+  <!-- Tailwind -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Babylon.js -->
+  <script src="https://cdn.babylonjs.com/babylon.js"></script>
+  <script src="https://cdn.babylonjs.com/loaders/babylonjs.loaders.min.js"></script>
+
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      overflow: hidden;
+      background: #000;
+    }
+    #renderCanvas {
+      width: 100%;
+      height: 100%;
+      touch-action: none;
+      display: block;
+    }
+
+    /* 魔法弹出按钮 */
+    #spotPopup {
+      position: absolute;
+      transform: translate(-50%, -120%);
+      padding: 10px 16px;
+      border-radius: 999px;
+      background: radial-gradient(circle at 30% 0%, #ffffffaa, #c18c46);
+      color: #fff;
+      font-weight: 700;
+      box-shadow: 0 0 18px rgba(248, 222, 129, 0.7);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.25s ease, transform 0.25s ease;
+      white-space: nowrap;
+    }
+    #spotPopup.show {
+      opacity: 1;
+      transform: translate(-50%, -130%) scale(1.02);
+      pointer-events: auto;
+    }
+
+    /* 复古风资料卡片 */
+    #detailPanel {
+      position: absolute;
+      inset: 10% 6%;
+      background: #f5e4c7;
+      color: #3c2f23;
+      border-radius: 18px;
+      box-shadow: 0 18px 40px rgba(0,0,0,0.6);
+      border: 2px solid rgba(90, 64, 38, 0.8);
+      padding: 20px 18px 70px 18px;
+      display: none;
+      overflow-y: auto;
+      font-family: "Georgia", "Times New Roman", serif;
+      background-size: cover;
+      background-position: center;
+      /* 这里可以换成你自己的复古纸张背景图：
+         background-image: url('images/vintage-paper.jpg'); */
+    }
+    #detailPanel.show {
+      display: block;
+      animation: panelIn 0.25s ease-out;
+    }
+    @keyframes panelIn {
+      from { opacity: 0; transform: translateY(15px) scale(0.97); }
+      to   { opacity: 1; transform: translateY(0) scale(1); }
+    }
+
+    /* 右上角关闭按钮 */
+    #detailClose {
+      position: absolute;
+      top: 14px;
+      right: 16px;
+      cursor: pointer;
+      font-size: 1.1rem;
+      color: #5a3a20;
+    }
+
+    /* 下方按钮区域 */
+    #detailPanel button {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+  </style>
+</head>
+
+<body class="relative">
+
+  <!-- 3D 场景 -->
+  <canvas id="renderCanvas"></canvas>
+
+  <!-- 顶部标题 UI -->
+  <header class="absolute top-3 inset-x-0 text-center text-white drop-shadow-lg pointer-events-none">
+    <h1 class="text-xl font-serif tracking-wide">Explore the Castle</h1>
+    <p class="text-xs opacity-80">Drag to rotate. Tap to discover a spot.</p>
+  </header>
+
+  <!-- 魔法弹出按钮（点击模型后出现） -->
+  <div id="spotPopup">
+    <span id="spotPopupLabel">Gate</span>
+  </div>
+
+  <!-- 复古资料卡片 -->
+  <div id="detailPanel">
+    <div id="detailClose">✖</div>
+    <h2 id="detailTitle" class="text-2xl mb-3 underline decoration-amber-800 decoration-2">
+      Gate
+    </h2>
+    <p id="detailBody" class="text-sm leading-relaxed mb-4">
+      Placeholder text for this location.
+    </p>
+
+    <div class="mt-4 text-sm space-y-1">
+      <p id="detailExtra1">• Opening hours and accessibility notes.</p>
+      <p id="detailExtra2">• Small historical anecdote or story hook.</p>
+    </div>
+
+    <div class="mt-6 flex justify-end">
+      <button id="addToRouteBtn"
+              class="bg-amber-800 text-amber-50 px-4 py-2 rounded-full text-sm font-semibold hover:bg-amber-900 transition">
+        ➕ Add this spot to My Route
+      </button>
+    </div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById("renderCanvas");
+    const popup = document.getElementById("spotPopup");
+    const popupLabel = document.getElementById("spotPopupLabel");
+    const detailPanel = document.getElementById("detailPanel");
+    const detailTitle = document.getElementById("detailTitle");
+    const detailBody = document.getElementById("detailBody");
+    const detailExtra1 = document.getElementById("detailExtra1");
+    const detailExtra2 = document.getElementById("detailExtra2");
+    const detailClose = document.getElementById("detailClose");
+    const addToRouteBtn = document.getElementById("addToRouteBtn");
+
+    // 简单地点数据（prototype 文本）
+    const spotInfo = {
+      "Gate": {
+        label: "🚪 Gate",
+        title: "Main Gate",
+        body: "The main entrance where visitors first step into the world of Casa Loma. Many formal arrivals and quiet goodbyes happened here.",
+        extra1: "• Often used as the meeting point for guided tours.",
+        extra2: "• A good place to start your journey and orient yourself."
+      },
+      "Stable": {
+        label: "🐴 Stable",
+        title: "Castle Stables",
+        body: "Once home to the estate’s prized horses, the stable still echoes with the rhythm of carriages and hoofbeats.",
+        extra1: "• Notice the original tilework and iron fittings.",
+        extra2: "• Stories of the staff who worked here add life to the space."
+      },
+      "Garden": {
+        label: "🌸 Garden",
+        title: "Lower Garden",
+        body: "A quiet refuge of flowers, stone paths, and seasonal displays. The garden was designed as a private escape from the city.",
+        extra1: "• Ideal for photos and a short break from indoor halls.",
+        extra2: "• In some seasons, live events and music take place here."
+      },
+      "Dining Hall": {
+        label: "🍽️ Dining Hall",
+        title: "Grand Dining Hall",
+        body: "The heart of formal gatherings, where guests were welcomed with multi-course meals under glittering chandeliers.",
+        extra1: "• Look up at the ceiling details and carved wood panels.",
+        extra2: "• Imagine the sound of clinking glasses and live music."
+      },
+      "Cellar": {
+        label: "🍷 Cellar",
+        title: "Wine Cellar",
+        body: "Cool, quiet, and hidden below—this cellar once stored carefully selected wines for the castle’s grand dinners.",
+        extra1: "• The temperature and layout were designed for preservation.",
+        extra2: "• Perfect place to introduce stories of trade and travel."
+      }
+    };
+
+    let engine, scene, camera;
+    let currentSpotName = null; // 当前弹出的地点
+
+    // Babylon 场景
+    function createScene() {
+      engine = new BABYLON.Engine(canvas, true);
+      scene = new BABYLON.Scene(engine);
+      scene.clearColor = new BABYLON.Color4(0, 0, 0, 1);
+      // 自动创建一个天空背景（内置的）
+      BABYLON.CubeTexture.CreateFromPrefilteredData("https://assets.babylonjs.com/environments/environmentSpecular.env", scene);
+      scene.environmentTexture = BABYLON.CubeTexture.CreateFromPrefilteredData("https://assets.babylonjs.com/environments/environmentSpecular.env", scene);
+      scene.createDefaultSkybox(scene.environmentTexture, true, 1000, 0.3);
+
+
+      // 相机：水平旋转，垂直角度基本锁死
+      camera = new BABYLON.ArcRotateCamera(
+        "camera",
+        Math.PI * 1.5,        // alpha
+        Math.PI / 3,        // beta
+        18,                 // radius
+        new BABYLON.Vector3(0, -1, 0),
+        scene
+      );
+      camera.attachControl(canvas, true);
+      camera.lowerBetaLimit = Math.PI / 3;
+      camera.upperBetaLimit = Math.PI / 3; // 锁定垂直角度，只能水平转
+
+      const light = new BABYLON.HemisphericLight(
+        "light",
+        new BABYLON.Vector3(1, 1, 0),
+        scene
+      );
+      light.intensity = 0.9;
+
+      // 加载 GLB 模型（完整示例）
+    BABYLON.SceneLoader.ImportMeshAsync(
+    "",          // meshNames (空表示加载全部)
+    "/models/",   // 文件路径
+    "castle.glb",// 文件名
+    scene
+    ).then(result => {
+    const rootMesh = result.meshes[0]; // 通常第一个是根节点
+    rootMesh.scaling = new BABYLON.Vector3(1, 1, 1);  // 调整缩放大小
+    rootMesh.position = new BABYLON.Vector3(0, 0, 0); // 调整位置到地面中心
+    rootMesh.rotation = new BABYLON.Vector3(0, Math.PI, 0); // 调整朝向（按需修改）
+    });
+
+
+      // 四个简易塔楼 + 一块后方区域，代表 5 个地点
+      const spots = [];
+
+      function createSpotBox(name, pos, size = { width: 3, height: 3, depth: 3 }) {
+        const box = BABYLON.MeshBuilder.CreateBox(name, {
+            width: size.width,
+            height: size.height,
+            depth: size.depth
+        }, scene);
+
+        box.position = pos;
+
+        const m = new BABYLON.StandardMaterial(name + "Mat", scene);
+        m.diffuseColor = new BABYLON.Color3(0.4, 0.7, 1.0); // 淡蓝色
+        m.alpha = 0.0;  // ✅ 半透明
+        box.material = m;
+        box.metadata = { spotName: name };
+
+        return box;
+        }
+
+
+      createSpotBox("Gate",         new BABYLON.Vector3(0, -1, 0), { width: 3, height: 2, depth: 2 });
+      createSpotBox("Stable",       new BABYLON.Vector3(10, -1, -3), { width: 3, height: 4, depth: 8 });
+      createSpotBox("Garden",       new BABYLON.Vector3(-1, -1, 7), { width: 7, height: 2, depth: 4 });
+      createSpotBox("Dining Hall",  new BABYLON.Vector3(-2, 0, 2), { width: 3, height: 3, depth: 3 });
+      createSpotBox("Cellar",       new BABYLON.Vector3(-3, -2, 0), { width: 3, height: 3, depth: 3 });
+
+      // 点击拾取
+      scene.onPointerObservable.add(pointerInfo => {
+        if (pointerInfo.type === BABYLON.PointerEventTypes.POINTERDOWN) {
+          const pickResult = pointerInfo.pickInfo || scene.pick(
+            scene.pointerX,
+            scene.pointerY
+          );
+
+          if (pickResult && pickResult.hit && pickResult.pickedMesh && pickResult.pickedMesh.metadata && pickResult.pickedMesh.metadata.spotName) {
+            const spotName = pickResult.pickedMesh.metadata.spotName;
+            currentSpotName = spotName;
+            showPopupForMesh(pickResult.pickedMesh);
+          } else {
+            hidePopup();
+          }
+        }
+      });
+
+      engine.runRenderLoop(() => {
+        scene.render();
+        // 如果弹出按钮显示着，每帧都重新更新位置，防止用户旋转时错位
+        if (popup.classList.contains("show") && currentSpotName) {
+          const mesh = scene.getMeshByName(currentSpotName);
+          if (mesh) {
+            positionPopupOverMesh(mesh);
+          }
+        }
+      });
+
+      window.addEventListener("resize", () => engine.resize());
+      return scene;
+    }
+
+    // 计算按钮位置
+    function positionPopupOverMesh(mesh) {
+      const pos = mesh.getBoundingInfo().boundingBox.centerWorld;
+      const projected = BABYLON.Vector3.Project(
+        pos,
+        BABYLON.Matrix.Identity(),
+        scene.getTransformMatrix(),
+        camera.viewport.toGlobal(engine.getRenderWidth(), engine.getRenderHeight())
+      );
+      popup.style.left = projected.x + "px";
+      popup.style.top  = projected.y + "px";
+    }
+
+    function showPopupForMesh(mesh) {
+      const spotName = mesh.metadata.spotName;
+      const info = spotInfo[spotName];
+      popupLabel.textContent = info ? info.label : spotName;
+      positionPopupOverMesh(mesh);
+      popup.classList.add("show");
+    }
+
+    function hidePopup() {
+      popup.classList.remove("show");
+      currentSpotName = null;
+    }
+
+    // 点击弹出按钮 → 打开资料卡片
+    let popupClickable = true; // 点击冷却锁
+
+    popup.addEventListener("click", () => {
+    if (!popupClickable || !currentSpotName) return;
+
+    const info = spotInfo[currentSpotName];
+    if (!info) return;
+
+    detailTitle.textContent = info.title;
+    detailBody.textContent = info.body;
+    detailExtra1.textContent = info.extra1;
+    detailExtra2.textContent = info.extra2;
+    detailPanel.classList.add("show");
+    popup.classList.remove("show");
+    });
+
+    // 在 showPopupForMesh() 里加上点击冷却：
+    function showPopupForMesh(mesh) {
+    const spotName = mesh.metadata.spotName;
+    const info = spotInfo[spotName];
+    popupLabel.textContent = info ? info.label : spotName;
+    positionPopupOverMesh(mesh);
+    popup.classList.add("show");
+
+    // 临时禁用按钮点击 400ms，防止触控穿透
+    popupClickable = false;
+    setTimeout(() => popupClickable = true, 400);
+    }
+
+    // 关闭资料卡片
+    detailClose.addEventListener("click", () => {
+      detailPanel.classList.remove("show");
+    });
+
+    // 点击“Add to Route” → 跳转到 Route Planner 并传递地点
+    addToRouteBtn.addEventListener("click", () => {
+      if (!currentSpotName) return;
+      const encoded = encodeURIComponent(currentSpotName);
+      window.location.href = `route.html?add=${encoded}`;
+    });
+
+    // 初始化场景
+    createScene();
+  </script>
+</body>
+</html>
