@@ -216,17 +216,18 @@
       light.intensity = 0.9;
 
       // 加载 GLB 模型（完整示例）
-    BABYLON.SceneLoader.ImportMeshAsync(
-    "",          // meshNames (空表示加载全部)
-    "/models/",   // 文件路径
-    "castle.glb",// 文件名
-    scene
-    ).then(result => {
-    const rootMesh = result.meshes[0]; // 通常第一个是根节点
-    rootMesh.scaling = new BABYLON.Vector3(1, 1, 1);  // 调整缩放大小
-    rootMesh.position = new BABYLON.Vector3(0, 0, 0); // 调整位置到地面中心
-    rootMesh.rotation = new BABYLON.Vector3(0, Math.PI, 0); // 调整朝向（按需修改）
-    });
+      const basePath = window.location.pathname.includes('HCIFinal') ? '/HCIFinal/' : '/';
+      BABYLON.SceneLoader.ImportMeshAsync(
+      "",          // meshNames (空表示加载全部)
+      `${basePath}models/`,   // 文件路径
+      "castle.glb",// 文件名
+      scene
+      ).then(result => {
+      const rootMesh = result.meshes[0]; // 通常第一个是根节点
+      rootMesh.scaling = new BABYLON.Vector3(1, 1, 1);  // 调整缩放大小
+      rootMesh.position = new BABYLON.Vector3(0, 0, 0); // 调整位置到地面中心
+      rootMesh.rotation = new BABYLON.Vector3(0, Math.PI, 0); // 调整朝向（按需修改）
+      });
 
 
       // 四个简易塔楼 + 一块后方区域，代表 5 个地点

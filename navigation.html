@@ -368,7 +368,7 @@
       if (!spotName) return;
 
       //const modelUrl = `models/${spotName}.glb`; // 按你实际路径改
-      const modelUrl = `models/knight.glb`;
+      const modelUrl = `knight.glb`;
       try {
         const cam = scene.activeCamera;
         if (!cam) return;
@@ -394,9 +394,10 @@
         );
 
         // ✅ 加载模型
+        const basePath = window.location.pathname.includes('HCIFinal') ? '/HCIFinal/' : '/';
         const result = await BABYLON.SceneLoader.ImportMeshAsync(
           "",
-          "",       // 如果和 html 同目录，就留空
+          `${basePath}models/`,       // 如果和 html 同目录，就留空
           modelUrl,
           scene
         );
@@ -412,14 +413,14 @@
         portalModel.lookAt(new BABYLON.Vector3(cam.position.x, portalModel.position.y, cam.position.z));
         portalModel.rotate(BABYLON.Axis.Y, Math.PI, BABYLON.Space.WORLD);
 
-        // 十秒后自动销毁
+        // 30s后自动销毁
         window._portalTimer = setTimeout(() => {
           if (portalModel && !portalModel.isDisposed()) {
             portalModel.dispose();
             portalModel = null;
             console.log("🌀 Time Portal closed.");
           }
-        }, 15000);
+        }, 30000);
 
       } catch (err) {
         console.warn(`Failed to load model for ${spotName}:`, err);
